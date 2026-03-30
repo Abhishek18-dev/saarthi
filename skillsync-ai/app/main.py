@@ -136,11 +136,17 @@ def health_check() -> dict:
 @app.get("/stats", tags=["meta"])
 def system_stats() -> dict:
     """System statistics — embedding cache state and config summary."""
+    cache_stats = EmbeddingCache.stats()
+    if not cache_stats["cached"]:
+        # Keep /stats deterministic in environments where lifespan may not run.
+        EmbeddingCache.get()
+        cache_stats = EmbeddingCache.stats()
+
     return {
         "app": settings.app_name,
         "version": settings.app_version,
         "embedding_model": settings.embedding_model,
-        "cache": EmbeddingCache.stats(),
+        "cache": cache_stats,
         "recommendation_weights": {
             "skill_similarity": settings.weight_skill_similarity,
             "level_match": settings.weight_level_match,
