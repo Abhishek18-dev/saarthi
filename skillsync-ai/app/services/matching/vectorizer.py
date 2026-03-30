@@ -25,7 +25,7 @@ def _get_model() -> SentenceTransformer:
     global _model
     if _model is None:
         logger.info("Loading embedding model '%s' …", settings.embedding_model)
-        _model = SentenceTransformer(settings.embedding_model)
+        _model = SentenceTransformer(settings.embedding_model, device="cpu")
         logger.info("Embedding model loaded successfully")
     return _model
 

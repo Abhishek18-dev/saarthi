@@ -68,6 +68,10 @@ app.add_middleware(
 app.include_router(match_router, prefix="/api")
 app.include_router(recommend_router, prefix="/api")
 
+# Compatibility aliases without the /api prefix.
+app.include_router(match_router, include_in_schema=False)
+app.include_router(recommend_router, include_in_schema=False)
+
 
 # ── Root endpoints ─────────────────────────────────────────────────
 
