@@ -66,6 +66,14 @@ def get_top_similar(
     if exclude_self:
         scores[user_index] = -1.0  # ensure self is never included
 
-    # argsort returns ascending; negate to get descending order.
-    ranked_indices = np.argsort(-scores)[:top_k]
-    return [(int(idx), float(scores[idx])) for idx in ranked_indices]
+    # Clamp top_k to not exceed available users.
+    top_k = min(top_k, len(scores) - (1 if exclude_self else 0))
+
+    # argpartition is O(N) vs argsort's O(N log N) — faster for large N.
+    if top_k >= len(scores):
+        ranked = np.argsort(-scores)[:top_k]
+    else:
+        partitioned = np.argpartition(-scores, top_k)[:top_k]
+        ranked = partitioned[np.argsort(-scores[partitioned])]
+
+    return [(int(idx), round(float(scores[idx]), 4)) for idx in ranked]

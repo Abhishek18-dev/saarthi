@@ -9,7 +9,10 @@ POST /api/build-teams   — Auto-partition all users into teams.
 
 from __future__ import annotations
 
+import time
+
 from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi.responses import JSONResponse
 
 from app.schemas.match_schema import (
     MatchRequest,
@@ -28,6 +31,7 @@ router = APIRouter(tags=["matching"])
     "/match-users",
     response_model=MatchResponse,
     summary="Find top skill-based matches for a user",
+    responses={404: {"description": "User not found"}},
 )
 def match_users(
     body: MatchRequest,
@@ -35,8 +39,10 @@ def match_users(
 ) -> MatchResponse:
     """Return the top-K semantically similar users.
 
-    Uses SentenceTransformer embeddings + cosine similarity.
+    Uses SentenceTransformer embeddings + cosine similarity + semantic
+    skill group overlap.
     """
+    start = time.perf_counter()
     try:
         matches = get_matches(body.user_id, top_k=body.top_k)
     except ValueError as exc:
@@ -45,17 +51,20 @@ def match_users(
     # Fire-and-forget analytics.
     bg.add_task(log_match_event, body.user_id, matches)
 
-    return MatchResponse(
+    response = MatchResponse(
         user_id=body.user_id,
         matches=matches,  # type: ignore[arg-type]
         total=len(matches),
     )
+
+    return response
 
 
 @router.post(
     "/build-team",
     response_model=TeamResponse,
     summary="Build a balanced team around a seed user",
+    responses={404: {"description": "User not found"}},
 )
 def api_build_team(body: TeamRequest) -> TeamResponse:
     """Form a team using greedy similarity-based clustering."""

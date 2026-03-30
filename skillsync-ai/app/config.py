@@ -2,7 +2,7 @@
 
 Centralizes all tuneable settings. Values can be overridden via
 environment variables in production; defaults are safe for local
-development on a standard laptop.
+development on a standard laptop (CPU-only).
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ class Settings:
 
     # ── General ────────────────────────────────────────────────────
     app_name: str = "SkillSync AI"
-    app_version: str = "1.0.0"
+    app_version: str = "2.0.0"
     debug: bool = os.getenv("APP_ENV", "development") == "development"
 
     # ── Model ──────────────────────────────────────────────────────
@@ -35,14 +35,19 @@ class Settings:
     team_min_size: int = 3
     team_max_size: int = 5
 
-    # ── Recommendation weights ─────────────────────────────────────
-    weight_skill_similarity: float = 0.50
-    weight_level_match: float = 0.20
+    # ── Recommendation weights (must sum to 1.0) ───────────────────
+    weight_skill_similarity: float = 0.40
+    weight_level_match: float = 0.15
     weight_goal_match: float = 0.10
-    weight_activity: float = 0.20
+    weight_activity: float = 0.15
+    weight_interest_similarity: float = 0.20  # NEW: semantic interest match
+
+    # ── Project suggestion scoring ─────────────────────────────────
+    project_jaccard_weight: float = 0.60
+    project_semantic_weight: float = 0.40
 
     # ── Cold-start threshold (days since signup) ──────────────────
-    cold_start_days: int = 14
+    cold_start_days: int = 14  # users with joined_days_ago < this
 
     # ── Pagination defaults ────────────────────────────────────────
     default_page: int = 1

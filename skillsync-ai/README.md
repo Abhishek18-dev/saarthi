@@ -1,4 +1,4 @@
-# SkillSync AI 🧠
+# SkillSync AI v2.0 🧠⚡
 
 > AI-powered skill matching & recommendation platform built with FastAPI,
 > SentenceTransformers, and scikit-learn.  Runs on a normal laptop — no GPU required.
@@ -28,14 +28,33 @@ uvicorn app.main:app --reload
 
 ---
 
+## ✨ What's New in v2
+
+| Feature | v1 | v2 |
+|---------|----|----|
+| Recommendation signals | 4 (skill, level, goal, activity) | **5** (+interest similarity) |
+| Goal matching | Binary (same/different) | **Compatibility matrix** with partial credit |
+| Embedding cache | ❌ Re-computed every request | ✅ **Global singleton** — compute once |
+| Project scoring | Jaccard only | **Jaccard + Semantic** (cosine similarity) |
+| Skill grouping | ❌ | ✅ **Semantic skill groups** (14 clusters) |
+| User index lookup | O(N) linear scan | **O(1)** hash map |
+| Team builder scoring | O(N²) Python loops | **Vectorised numpy** |
+| Response timing | ❌ | ✅ `X-Process-Time` header |
+| Data cache safety | `lru_cache` on mutable list | **Frozen tuples** + copy-on-read |
+| Cold-start boundary | `<=` (false positives) | `<` (correct) |
+| Health endpoint | Basic | **Shows cache stats** |
+
+---
+
 ## 📡 API Endpoints
 
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/` | Root — API status |
-| `GET` | `/health` | Health check |
-| `POST` | `/api/match-users` | Find semantically similar users |
-| `POST` | `/api/build-team` | Build a team around a seed user |
+| `GET` | `/health` | Health check + cache stats |
+| `GET` | `/stats` | System config & weights |
+| `POST` | `/api/match-users` | Semantic user matching |
+| `POST` | `/api/build-team` | Build team around a seed user |
 | `POST` | `/api/build-teams` | Auto-partition users into teams |
 | `POST` | `/api/recommend` | Hybrid people + project recommendations |
 | `GET` | `/api/trust-score` | Calculate user trust score |
@@ -52,7 +71,7 @@ curl -X POST http://127.0.0.1:8000/api/match-users \
   -d '{"user_id": 1, "top_k": 5}'
 ```
 
-### Get Recommendations
+### Get Recommendations (Paginated)
 ```bash
 curl -X POST http://127.0.0.1:8000/api/recommend \
   -H "Content-Type: application/json" \
@@ -71,14 +90,19 @@ curl -X POST http://127.0.0.1:8000/api/build-team \
 curl http://127.0.0.1:8000/api/trust-score?user_id=4
 ```
 
+### System Stats
+```bash
+curl http://127.0.0.1:8000/stats
+```
+
 ---
 
 ## 🏗️ Architecture
 
 ```
 app/
-├── main.py                      # FastAPI entry point + lifespan
-├── config.py                    # Centralised settings
+├── main.py                      # FastAPI entry + lifespan + timing middleware
+├── config.py                    # Centralised settings (all weights & thresholds)
 ├── dependencies.py              # Shared DI helpers
 ├── api/
 │   ├── match_routes.py          # Matching endpoints
@@ -89,22 +113,22 @@ app/
 │   └── recommend_schema.py      # Recommendation request/response
 ├── services/
 │   ├── matching/
-│   │   ├── vectorizer.py        # Profile → embedding (SentenceTransformer)
-│   │   ├── similarity.py        # Cosine similarity computation
+│   │   ├── vectorizer.py        # EmbeddingCache + SentenceTransformer
+│   │   ├── similarity.py        # Cosine similarity (optimised argpartition)
 │   │   ├── matcher.py           # Top-K match orchestrator
-│   │   └── team_builder.py      # Greedy team clustering
+│   │   └── team_builder.py      # Vectorised greedy team clustering
 │   ├── recommendation/
-│   │   ├── recommender.py       # Hybrid scoring engine
-│   │   ├── project_suggester.py # Jaccard project matching
+│   │   ├── recommender.py       # 5-signal hybrid scoring engine
+│   │   ├── project_suggester.py # Jaccard + semantic project matching
 │   │   └── trust_score.py       # Activity + ratings trust score
 │   ├── llm_utils/
 │   │   ├── prompt_templates.py  # Ready-to-use LLM prompts
 │   │   └── llm_client.py       # Pluggable LLM client
 │   └── common/
-│       ├── constants.py         # Shared constants & mappings
-│       └── utils.py             # Data loading & caching
+│       ├── constants.py         # Semantic skill groups + mappings
+│       └── utils.py             # Safe data loading + O(1) index
 ├── background/
-│   └── tasks.py                 # Background processing
+│   └── tasks.py                 # Startup warm-up + cache refresh
 ├── core/
 │   ├── logger.py                # Structured logging
 │   └── security.py              # Auth placeholder
@@ -113,8 +137,42 @@ data/
 ├── users.json                   # Mock user database (10 users)
 └── projects.json                # Mock project database (12 projects)
 tests/
-└── test_matching.py             # Integration test suite
+└── test_matching.py             # 25+ integration tests
 ```
+
+---
+
+## 🧠 How It Works
+
+### Matching Engine
+1. Each user profile → rich text description
+2. SentenceTransformer encodes it into a 384-dim dense vector
+3. **EmbeddingCache** stores all vectors + similarity matrix globally
+4. Cosine similarity finds the closest matches
+5. Results include **shared semantic skill groups**
+
+### Recommendation Engine (5-Signal Hybrid)
+```
+Final Score = (Skill Similarity × 0.40)    ← semantic embeddings
+            + (Interest Sim    × 0.20)    ← interest/goal/bio embeddings
+            + (Level Match     × 0.15)    ← normalised distance
+            + (Activity Weight × 0.15)    ← engagement signals
+            + (Goal Match      × 0.10)    ← compatibility matrix
+```
+
+### Cold-Start Handling
+New users (< 14 days) automatically receive **trending user**
+recommendations ranked by activity score.
+
+### Project Suggestions (Hybrid)
+```
+Score = (0.60 × Jaccard overlap) + (0.40 × Semantic cosine sim)
+      + Difficulty bonus (if level matches)
+```
+
+### Team Builder
+Vectorised greedy clustering using numpy matrix operations.  Assigns
+roles (Team Lead, ML/Data, Frontend, Backend, Contributor) automatically.
 
 ---
 
@@ -128,34 +186,6 @@ tests/
 | Vectors | NumPy |
 | Validation | Pydantic v2 |
 | Database | JSON (mock) |
-
----
-
-## 🧠 How It Works
-
-### Matching Engine
-1. Each user profile is converted to a descriptive text string
-2. SentenceTransformer encodes it into a 384-dim dense vector
-3. Cosine similarity finds the closest matches
-4. Results are ranked and returned
-
-### Recommendation Engine
-Hybrid scoring formula:
-```
-Final Score = (Skill Similarity × 0.50)
-            + (Level Match × 0.20)
-            + (Goal Match × 0.10)
-            + (Activity Weight × 0.20)
-```
-
-### Cold Start Handling
-New users (< 14 days) automatically receive trending user recommendations
-instead of similarity-based ones.
-
-### Team Builder
-Greedy similarity-based clustering that picks the most similar available
-user at each step, building balanced teams of 3-5 members with
-auto-assigned roles.
 
 ---
 

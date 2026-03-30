@@ -1,8 +1,8 @@
 """Background tasks for heavy / async operations.
 
-In a production deployment these would be pushed to a proper task
-queue (Celery, ARQ, etc.).  For the hackathon demo we use FastAPI's
-built-in ``BackgroundTasks`` to run them after the response is sent.
+v2: ``precompute_embeddings()`` now populates the global
+``EmbeddingCache`` so the startup warm-up actually benefits
+subsequent requests (was a no-op before).
 """
 
 from __future__ import annotations
@@ -11,36 +11,25 @@ import time
 from typing import Any
 
 from app.core.logger import logger
-from app.services.matching.vectorizer import embed_users
-from app.services.matching.similarity import compute_similarity_matrix
-from app.services.common.utils import load_users, invalidate_caches
+from app.services.matching.vectorizer import EmbeddingCache
+from app.services.common.utils import load_users_frozen, invalidate_caches
 
 
 def precompute_embeddings() -> dict[str, Any]:
     """Pre-compute and cache all user embeddings + similarity matrix.
 
-    Called at startup or on-demand to warm the vector cache so the
-    first real request is fast.
+    Called at startup or on-demand.  The result is stored in
+    ``EmbeddingCache`` so all subsequent requests are instantaneous.
     """
     logger.info("Background: pre-computing embeddings …")
-    start = time.perf_counter()
-
-    users = load_users()
-    embeddings = embed_users(users)
-    sim_matrix = compute_similarity_matrix(embeddings)
-
-    elapsed = time.perf_counter() - start
+    users = load_users_frozen()
+    stats = EmbeddingCache.warm(users)
     logger.info(
         "Background: embeddings ready — %d users, %.2fs elapsed",
-        len(users),
-        elapsed,
+        stats["users"],
+        stats["elapsed_seconds"],
     )
-    return {
-        "users": len(users),
-        "embedding_shape": list(embeddings.shape),
-        "sim_matrix_shape": list(sim_matrix.shape),
-        "elapsed_seconds": round(elapsed, 3),
-    }
+    return stats
 
 
 def refresh_data() -> None:
@@ -63,10 +52,18 @@ def log_match_event(
     """Log a matching event for analytics (placeholder).
 
     In production this would write to a database or event stream.
+    Handles both V1 (matchScore) and internal (similarity_score) keys.
     """
+    top_score = 0.0
+    if matches:
+        first = matches[0]
+        top_score = first.get(
+            "similarity_score",
+            first.get("matchScore", first.get("match_score", 0.0)),
+        )
     logger.info(
         "Analytics: user %d matched with %d users — top score %.4f",
         user_id,
         len(matches),
-        matches[0]["similarity_score"] if matches else 0.0,
+        top_score,
     )

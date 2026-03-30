@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from pydantic import BaseModel, Field
 
 
@@ -13,6 +11,12 @@ class RecommendRequest(BaseModel):
     user_id: int = Field(..., description="Target user ID")
     page: int = Field(default=1, ge=1, description="Page number (1-indexed)")
     limit: int = Field(default=10, ge=1, le=50, description="Results per page")
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [{"user_id": 2, "page": 1, "limit": 5}]
+        }
+    }
 
 
 class PersonRecommendation(BaseModel):

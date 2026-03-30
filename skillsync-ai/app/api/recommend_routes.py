@@ -2,8 +2,8 @@
 
 Endpoints
 ---------
-POST /api/recommend      — Hybrid people + project recommendations.
-GET  /api/trust-score    — Trust score for a given user.
+POST /api/recommend       — Hybrid people + project recommendations.
+GET  /api/trust-score     — Trust score for a given user.
 POST /api/suggest-projects — Project suggestions for a user.
 """
 
@@ -27,13 +27,15 @@ router = APIRouter(tags=["recommendation"])
     "/recommend",
     response_model=RecommendResponse,
     summary="Get hybrid people + project recommendations",
+    responses={404: {"description": "User not found"}},
 )
 def recommend(body: RecommendRequest) -> RecommendResponse:
     """Return paginated people recommendations and project suggestions.
 
-    The people list uses a hybrid scoring formula blending skill
-    similarity, level match, goal match, and activity.  Projects
-    are ranked by Jaccard skill overlap with a fallback map.
+    The people list uses a 5-signal hybrid scoring formula blending
+    skill similarity, level match, goal compatibility, activity, and
+    interest similarity.  Projects are ranked by a Jaccard + semantic
+    combined score.
     """
     try:
         people = get_recommendations(
@@ -56,6 +58,7 @@ def recommend(body: RecommendRequest) -> RecommendResponse:
     "/trust-score",
     response_model=TrustScoreResponse,
     summary="Calculate trust score for a user",
+    responses={404: {"description": "User not found"}},
 )
 def trust_score(
     user_id: int = Query(..., description="User ID to compute trust score for"),
@@ -72,12 +75,13 @@ def trust_score(
 @router.post(
     "/suggest-projects",
     summary="Get project suggestions tailored to a user's skills",
+    responses={404: {"description": "User not found"}},
 )
 def api_suggest_projects(
     user_id: int,
     top_k: int = Query(default=5, ge=1, le=20),
 ) -> dict:
-    """Return project suggestions using Jaccard matching + fallback."""
+    """Return project suggestions using Jaccard + semantic matching."""
     try:
         projects = suggest_projects(user_id, top_k=top_k)
     except ValueError as exc:

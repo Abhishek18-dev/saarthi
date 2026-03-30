@@ -1,7 +1,11 @@
 """Matcher — orchestrates vectorization + similarity to find top
 matches for a given user.
 
-This is the primary entry-point other layers call.
+v2 changes
+----------
+* Uses ``EmbeddingCache`` — zero redundant embedding computation.
+* Uses ``build_user_index()`` — O(1) user ID → index look-up.
+* Adds semantic skill-group bonus from ``constants``.
 """
 
 from __future__ import annotations
@@ -10,12 +14,10 @@ from typing import Any
 
 from app.config import settings
 from app.core.logger import logger
-from app.services.common.utils import load_users, get_user_by_id
-from app.services.matching.vectorizer import embed_users
-from app.services.matching.similarity import (
-    compute_similarity_matrix,
-    get_top_similar,
-)
+from app.services.common.utils import load_users_frozen, build_user_index, get_user_by_id
+from app.services.common.constants import compute_group_overlap
+from app.services.matching.vectorizer import EmbeddingCache
+from app.services.matching.similarity import get_top_similar
 
 
 def get_matches(
@@ -36,7 +38,8 @@ def get_matches(
     -------
     list[dict]
         Each dict contains ``user_id``, ``name``, ``skills``,
-        ``level``, ``goal``, and ``similarity_score``.
+        ``level``, ``goal``, ``similarity_score``, and
+        ``shared_skill_groups``.
 
     Raises
     ------
@@ -46,20 +49,14 @@ def get_matches(
     if top_k is None:
         top_k = settings.default_top_k
 
-    users = load_users()
-    target_user = get_user_by_id(user_id)
-    if target_user is None:
+    # O(1) index look-up.
+    index_map = build_user_index()
+    user_index = index_map.get(user_id)
+    if user_index is None:
         raise ValueError(f"User with id={user_id} not found")
 
-    # Determine the index of the target user inside the users list.
-    user_index: int | None = None
-    for idx, u in enumerate(users):
-        if u["id"] == user_id:
-            user_index = idx
-            break
-
-    if user_index is None:
-        raise ValueError(f"User with id={user_id} not found in list")
+    users = load_users_frozen()
+    target_user = users[user_index]
 
     logger.info(
         "Computing matches for user %d (%s) — top_k=%d",
@@ -68,27 +65,31 @@ def get_matches(
         top_k,
     )
 
-    # 1. Embed all users in one batch for efficiency.
-    embeddings = embed_users(users)
+    # Cached embeddings + similarity matrix — no re-computation.
+    _, sim_matrix = EmbeddingCache.get()
 
-    # 2. Build similarity matrix.
-    sim_matrix = compute_similarity_matrix(embeddings)
-
-    # 3. Retrieve top-K (excluding self).
+    # Retrieve top-K (excluding self).
     top_indices = get_top_similar(sim_matrix, user_index, top_k=top_k)
 
-    # 4. Package results.
+    # Package results with skill-group bonus info.
+    target_skills = target_user.get("skills", [])
     results: list[dict[str, Any]] = []
     for idx, score in top_indices:
         matched_user = users[idx]
+        matched_skills = matched_user.get("skills", [])
+
+        # Compute semantic group overlap for richer match explanation.
+        group_overlap = compute_group_overlap(target_skills, matched_skills)
+
         results.append(
             {
                 "user_id": matched_user["id"],
                 "name": matched_user.get("name", f"User {matched_user['id']}"),
-                "skills": matched_user.get("skills", []),
+                "skills": matched_skills,
                 "level": matched_user.get("level", "Unknown"),
                 "goal": matched_user.get("goal", "General"),
-                "similarity_score": round(score, 4),
+                "similarity_score": score,
+                "shared_skill_groups": round(group_overlap, 2),
             }
         )
 

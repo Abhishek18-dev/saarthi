@@ -11,6 +11,8 @@ class MatchRequest(BaseModel):
     user_id: int = Field(..., description="ID of the user to find matches for")
     top_k: int = Field(default=5, ge=1, le=20, description="Number of results")
 
+    model_config = {"json_schema_extra": {"examples": [{"user_id": 1, "top_k": 5}]}}
+
 
 class MatchResult(BaseModel):
     """Single match entry in the response."""
@@ -21,6 +23,7 @@ class MatchResult(BaseModel):
     level: str
     goal: str
     similarity_score: float
+    shared_skill_groups: float = 0.0
 
 
 class MatchResponse(BaseModel):
@@ -36,6 +39,8 @@ class TeamRequest(BaseModel):
 
     user_id: int = Field(..., description="Seed user for the team")
     team_size: int = Field(default=3, ge=3, le=5, description="Desired team size")
+
+    model_config = {"json_schema_extra": {"examples": [{"user_id": 1, "team_size": 4}]}}
 
 
 class TeamMember(BaseModel):

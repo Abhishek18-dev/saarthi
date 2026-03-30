@@ -1,17 +1,11 @@
 """Team Builder — form balanced teams using similarity clustering.
 
-Strategy
---------
-1. Embed all users.
-2. Pick a seed user (the requester).
-3. Greedily add the most similar users until the team reaches
-   the desired size.
-4. Optionally build multiple teams by repeating the process with
-   remaining users.
-
-This is intentionally simple — a K-Means or spectral-clustering
-approach could replace it for larger pools, but greedy selection
-is fast, deterministic, and easy to explain in a hackathon demo.
+v2 changes
+----------
+* Uses ``EmbeddingCache`` — zero redundant embedding computation.
+* Vectorised numpy scoring replaces the Python inner loop.
+* Adds ``skill_coverage`` metric showing how many unique skill groups
+  the team covers (diversity metric for demos).
 """
 
 from __future__ import annotations
@@ -22,9 +16,9 @@ import numpy as np
 
 from app.config import settings
 from app.core.logger import logger
-from app.services.common.utils import load_users, get_user_by_id
-from app.services.matching.vectorizer import embed_users
-from app.services.matching.similarity import compute_similarity_matrix
+from app.services.common.utils import load_users_frozen, build_user_index, get_user_by_id
+from app.services.common.constants import get_skill_group
+from app.services.matching.vectorizer import EmbeddingCache
 
 
 def build_team(
@@ -50,15 +44,13 @@ def build_team(
         team_size = settings.team_min_size
     team_size = max(settings.team_min_size, min(team_size, settings.team_max_size))
 
-    users = load_users()
-    target = get_user_by_id(user_id)
-    if target is None:
+    index_map = build_user_index()
+    seed_index = index_map.get(user_id)
+    if seed_index is None:
         raise ValueError(f"User with id={user_id} not found")
 
-    # Find seed index.
-    seed_index: int = next(
-        i for i, u in enumerate(users) if u["id"] == user_id
-    )
+    users = load_users_frozen()
+    target = users[seed_index]
 
     logger.info(
         "Building team of %d around user %d (%s)",
@@ -67,43 +59,55 @@ def build_team(
         target.get("name", ""),
     )
 
-    embeddings = embed_users(users)
-    sim_matrix = compute_similarity_matrix(embeddings)
+    # Cached similarity matrix.
+    _, sim_matrix = EmbeddingCache.get()
 
-    # Greedy team construction.
+    # Greedy team construction — vectorised scoring.
+    n_users = len(users)
+    selected_mask = np.zeros(n_users, dtype=bool)
     selected_indices: list[int] = [seed_index]
-    remaining = set(range(len(users))) - {seed_index}
+    selected_mask[seed_index] = True
 
-    while len(selected_indices) < team_size and remaining:
-        # Score each remaining user by average similarity to selected.
-        best_idx = -1
-        best_score = -1.0
-        for idx in remaining:
-            avg_sim = float(
-                np.mean([sim_matrix[idx][s] for s in selected_indices])
-            )
-            if avg_sim > best_score:
-                best_score = avg_sim
-                best_idx = idx
-        if best_idx == -1:
-            break
+    while len(selected_indices) < team_size and not selected_mask.all():
+        # Average similarity of each remaining user to all selected members.
+        selected_cols = sim_matrix[:, selected_indices]  # shape (N, len(selected))
+        avg_scores = selected_cols.mean(axis=1)          # shape (N,)
+        avg_scores[selected_mask] = -1.0                 # exclude already selected
+
+        best_idx = int(np.argmax(avg_scores))
+        if avg_scores[best_idx] <= -1.0:
+            break  # no remaining candidates
+
         selected_indices.append(best_idx)
-        remaining.discard(best_idx)
+        selected_mask[best_idx] = True
 
+    # Build team with skill coverage analysis.
     team: list[dict[str, Any]] = []
+    all_skill_groups: set[str] = set()
+
     for idx in selected_indices:
         member = users[idx]
+        role = _suggest_role(member)
         team.append(
             {
                 "user_id": member["id"],
                 "name": member.get("name", f"User {member['id']}"),
                 "skills": member.get("skills", []),
                 "level": member.get("level", "Unknown"),
-                "role": _suggest_role(member),
+                "role": role,
             }
         )
+        # Track unique skill groups this team covers.
+        for skill in member.get("skills", []):
+            group = get_skill_group(skill)
+            if group:
+                all_skill_groups.add(group)
 
-    logger.info("Team assembled: %s", [m["name"] for m in team])
+    logger.info(
+        "Team assembled: %s — covers %d skill groups",
+        [m["name"] for m in team],
+        len(all_skill_groups),
+    )
     return team
 
 
@@ -119,36 +123,31 @@ def build_multiple_teams(
         team_size = settings.team_min_size
     team_size = max(settings.team_min_size, min(team_size, settings.team_max_size))
 
-    users = load_users()
-    embeddings = embed_users(users)
-    sim_matrix = compute_similarity_matrix(embeddings)
+    users = load_users_frozen()
+    _, sim_matrix = EmbeddingCache.get()
 
-    assigned: set[int] = set()
+    n_users = len(users)
+    assigned = np.zeros(n_users, dtype=bool)
     teams: list[list[dict[str, Any]]] = []
 
-    for seed_idx in range(len(users)):
-        if seed_idx in assigned:
+    for seed_idx in range(n_users):
+        if assigned[seed_idx]:
             continue
 
         current_team_indices: list[int] = [seed_idx]
-        assigned.add(seed_idx)
-        remaining = set(range(len(users))) - assigned
+        assigned[seed_idx] = True
 
-        while len(current_team_indices) < team_size and remaining:
-            best_idx = -1
-            best_score = -1.0
-            for idx in remaining:
-                avg_sim = float(
-                    np.mean([sim_matrix[idx][s] for s in current_team_indices])
-                )
-                if avg_sim > best_score:
-                    best_score = avg_sim
-                    best_idx = idx
-            if best_idx == -1:
+        while len(current_team_indices) < team_size and not assigned.all():
+            selected_cols = sim_matrix[:, current_team_indices]
+            avg_scores = selected_cols.mean(axis=1)
+            avg_scores[assigned] = -1.0
+
+            best_idx = int(np.argmax(avg_scores))
+            if avg_scores[best_idx] <= -1.0:
                 break
+
             current_team_indices.append(best_idx)
-            assigned.add(best_idx)
-            remaining.discard(best_idx)
+            assigned[best_idx] = True
 
         team: list[dict[str, Any]] = []
         for idx in current_team_indices:
@@ -164,7 +163,7 @@ def build_multiple_teams(
             )
         teams.append(team)
 
-    logger.info("Built %d teams from %d users", len(teams), len(users))
+    logger.info("Built %d teams from %d users", len(teams), n_users)
     return teams
 
 
@@ -174,19 +173,24 @@ def _suggest_role(user: dict[str, Any]) -> str:
     """Heuristically assign a team role based on profile attributes."""
     level = user.get("level", "Beginner")
     goal = user.get("goal", "")
+    skills_lower = {s.lower() for s in user.get("skills", [])}
 
     if level == "Advanced" or goal == "Mentor":
         return "Team Lead"
     if goal == "Research":
         return "Researcher"
-    if any(
-        s.lower() in ("react", "vue.js", "flutter", "css", "tailwind css")
-        for s in user.get("skills", [])
-    ):
+
+    frontend_skills = {"react", "vue.js", "flutter", "css", "tailwind css",
+                       "next.js", "angular", "html", "dart"}
+    backend_skills = {"python", "django", "fastapi", "node.js", "java",
+                      "spring boot", "express", "go"}
+    ml_skills = {"machine learning", "tensorflow", "deep learning",
+                 "computer vision", "nlp", "pytorch"}
+
+    if skills_lower & ml_skills:
+        return "ML / Data"
+    if skills_lower & frontend_skills:
         return "Frontend / UI"
-    if any(
-        s.lower() in ("python", "django", "fastapi", "node.js", "java", "spring boot")
-        for s in user.get("skills", [])
-    ):
+    if skills_lower & backend_skills:
         return "Backend / API"
     return "Contributor"
