@@ -39,6 +39,8 @@ from app.schemas.v1_schema import (
 )
 from app.services.matching.matcher import get_matches
 from app.services.matching.team_builder import build_team
+from app.services.matching.vectorizer import EmbeddingCache
+from app.services.common.utils import load_users, use_runtime_users
 from app.services.recommendation.recommender import get_recommendations
 from app.services.recommendation.project_suggester import (
     suggest_projects,
@@ -48,6 +50,19 @@ from app.services.recommendation.trust_score import calculate_trust_score
 
 
 router = APIRouter(prefix="/api/v1", tags=["v1 — Spring Boot Integration"])
+
+
+def _resolve_users_and_mode(
+    runtime_users: list | None,
+) -> tuple[list[dict], str]:
+    """Auto-detect mode from request payload.
+
+    REAL mode is activated only when request.users is provided.
+    """
+    if runtime_users:
+        users = [u.model_dump(by_alias=False) for u in runtime_users]
+        return users, "REAL"
+    return load_users(), "DEMO"
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -75,10 +90,19 @@ def v1_match_users(body: V1MatchRequest):
 
     ``matchScore`` is a percentage (0–100), not a 0–1 float.
     """
-    try:
-        raw_matches = get_matches(body.user_id, top_k=5)
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    # Auto mode switch: request.users => REAL mode, otherwise DEMO mode.
+    users, mode = _resolve_users_and_mode(body.users)
+    logger.info("Running in %s mode", mode)
+
+    with use_runtime_users(users):
+        if mode == "REAL":
+            EmbeddingCache.invalidate()
+            EmbeddingCache.warm(users)
+
+        try:
+            raw_matches = get_matches(body.user_id, top_k=5)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     # Convert 0–1 similarity → 0–100 percentage and flatten.
     results = [
@@ -190,10 +214,19 @@ def v1_build_team(body: V1BuildTeamRequest):
           { "userId": 1, "name": "...", "skills": [...], "role": "..." }
         ]
     """
-    try:
-        raw_team = build_team(body.user_id, team_size=body.team_size)
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    # Auto mode switch: request.users => REAL mode, otherwise DEMO mode.
+    users, mode = _resolve_users_and_mode(body.users)
+    logger.info("Running in %s mode", mode)
+
+    with use_runtime_users(users):
+        if mode == "REAL":
+            EmbeddingCache.invalidate()
+            EmbeddingCache.warm(users)
+
+        try:
+            raw_team = build_team(body.user_id, team_size=body.team_size)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     results = [
         V1TeamMember(
@@ -232,11 +265,20 @@ def v1_recommendations(body: V1RecommendRequest):
           "projects": [ { "title": "...", "difficulty": "..." } ]
         }
     """
-    try:
-        raw_people = get_recommendations(body.user_id, page=1, limit=10)
-        raw_projects = suggest_projects(body.user_id, top_k=5)
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    # Auto mode switch: request.users => REAL mode, otherwise DEMO mode.
+    users, mode = _resolve_users_and_mode(body.users)
+    logger.info("Running in %s mode", mode)
+
+    with use_runtime_users(users):
+        if mode == "REAL":
+            EmbeddingCache.invalidate()
+            EmbeddingCache.warm(users)
+
+        try:
+            raw_people = get_recommendations(body.user_id, page=1, limit=10)
+            raw_projects = suggest_projects(body.user_id, top_k=5)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     people = [
         V1RecommendationPerson(

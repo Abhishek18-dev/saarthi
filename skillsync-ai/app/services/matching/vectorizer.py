@@ -179,9 +179,15 @@ class EmbeddingCache:
 
         Auto-warms if the cache is cold (first request).
         """
-        if cls._embeddings is None or cls._sim_matrix is None:
-            from app.services.common.utils import load_users_frozen
-            cls.warm(load_users_frozen())
+        from app.services.common.utils import load_users_frozen
+
+        users = load_users_frozen()
+        if (
+            cls._embeddings is None
+            or cls._sim_matrix is None
+            or cls._user_count != len(users)
+        ):
+            cls.warm(users)
         return cls._embeddings, cls._sim_matrix  # type: ignore[return-value]
 
     @classmethod
@@ -190,9 +196,11 @@ class EmbeddingCache:
 
         Auto-warms if the cache is cold.
         """
-        if cls._interest_sim_matrix is None:
-            from app.services.common.utils import load_users_frozen
-            cls.warm(load_users_frozen())
+        from app.services.common.utils import load_users_frozen
+
+        users = load_users_frozen()
+        if cls._interest_sim_matrix is None or cls._user_count != len(users):
+            cls.warm(users)
         return cls._interest_sim_matrix  # type: ignore[return-value]
 
     @classmethod

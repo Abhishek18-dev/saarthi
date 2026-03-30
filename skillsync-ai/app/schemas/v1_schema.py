@@ -17,10 +17,41 @@ from pydantic import BaseModel, Field
 
 # ── Requests ────────────────────────────────────────────────────────
 
+class V1UserActivity(BaseModel):
+    """Optional activity payload for runtime users."""
+
+    days_active: int = Field(default=0, alias="daysActive")
+    projects_joined: int = Field(default=0, alias="projectsJoined")
+    contributions: int = 0
+    last_active_days_ago: int = Field(default=30, alias="lastActiveDaysAgo")
+
+    model_config = {"populate_by_name": True}
+
+
+class V1User(BaseModel):
+    """Runtime user payload accepted from Spring Boot in REAL mode."""
+
+    id: int = Field(..., alias="userId")
+    name: str = "Unknown"
+    skills: list[str] = Field(default_factory=list)
+    level: str = "Beginner"
+    goal: str = "General"
+    bio: str = ""
+    interests: list[str] = Field(default_factory=list)
+    activity: V1UserActivity = Field(default_factory=V1UserActivity)
+    ratings: list[float] = Field(default_factory=list)
+    joined_days_ago: int = Field(default=0, alias="joinedDaysAgo")
+
+    model_config = {"populate_by_name": True}
+
 class V1MatchRequest(BaseModel):
     """POST /api/v1/match-users — input from Spring Boot."""
 
     user_id: int = Field(..., alias="userId", description="User ID to match")
+    users: list[V1User] | None = Field(
+        default=None,
+        description="Optional runtime users; when present, REAL mode is used",
+    )
 
     model_config = {"populate_by_name": True}
 
@@ -47,6 +78,10 @@ class V1BuildTeamRequest(BaseModel):
 
     user_id: int = Field(..., alias="userId")
     team_size: int = Field(default=3, ge=2, le=10, alias="teamSize")
+    users: list[V1User] | None = Field(
+        default=None,
+        description="Optional runtime users; when present, REAL mode is used",
+    )
 
     model_config = {"populate_by_name": True}
 
@@ -55,6 +90,10 @@ class V1RecommendRequest(BaseModel):
     """POST /api/v1/recommendations — input from Spring Boot."""
 
     user_id: int = Field(..., alias="userId")
+    users: list[V1User] | None = Field(
+        default=None,
+        description="Optional runtime users; when present, REAL mode is used",
+    )
 
     model_config = {"populate_by_name": True}
 

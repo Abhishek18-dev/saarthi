@@ -18,6 +18,74 @@ from app.main import app
 client = TestClient(app)
 
 
+REAL_MODE_USERS = [
+    {
+        "id": 101,
+        "name": "Real User 101",
+        "skills": ["Python", "FastAPI"],
+        "level": "Intermediate",
+        "goal": "Project",
+        "bio": "Backend engineer",
+        "interests": ["api", "ml"],
+        "activity": {
+            "days_active": 40,
+            "projects_joined": 3,
+            "contributions": 20,
+            "last_active_days_ago": 1,
+        },
+        "joined_days_ago": 100,
+    },
+    {
+        "id": 102,
+        "name": "Real User 102",
+        "skills": ["Python", "Machine Learning"],
+        "level": "Intermediate",
+        "goal": "Study",
+        "bio": "ML engineer",
+        "interests": ["research"],
+        "activity": {
+            "days_active": 30,
+            "projects_joined": 2,
+            "contributions": 15,
+            "last_active_days_ago": 2,
+        },
+        "joined_days_ago": 80,
+    },
+    {
+        "id": 103,
+        "name": "Real User 103",
+        "skills": ["React", "TypeScript"],
+        "level": "Beginner",
+        "goal": "Project",
+        "bio": "Frontend dev",
+        "interests": ["ui"],
+        "activity": {
+            "days_active": 15,
+            "projects_joined": 1,
+            "contributions": 8,
+            "last_active_days_ago": 3,
+        },
+        "joined_days_ago": 45,
+    },
+    {
+        "id": 104,
+        "name": "Real User 104",
+        "skills": ["Java", "Spring Boot"],
+        "level": "Advanced",
+        "goal": "Mentor",
+        "bio": "Platform engineer",
+        "interests": ["system design"],
+        "activity": {
+            "days_active": 60,
+            "projects_joined": 4,
+            "contributions": 35,
+            "last_active_days_ago": 0,
+        },
+        "joined_days_ago": 200,
+    },
+]
+
+
 # ────────────────────────────────────────────────────────────────────
 # 1. MATCH USERS — POST /api/v1/match-users
 # ────────────────────────────────────────────────────────────────────
@@ -88,6 +156,16 @@ class TestV1MatchUsers:
     def test_response_has_timing_header(self) -> None:
         resp = client.post("/api/v1/match-users", json={"userId": 1})
         assert "X-Process-Time" in resp.headers
+
+    def test_real_mode_uses_request_users(self) -> None:
+        resp = client.post(
+            "/api/v1/match-users",
+            json={"userId": 101, "users": REAL_MODE_USERS},
+        )
+        assert resp.status_code == 200
+        returned_ids = {m["userId"] for m in resp.json()}
+        allowed = {u["id"] for u in REAL_MODE_USERS if u["id"] != 101}
+        assert returned_ids.issubset(allowed)
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -227,6 +305,16 @@ class TestV1BuildTeam:
         )
         assert resp.status_code == 404
 
+    def test_real_mode_build_team_uses_request_users(self) -> None:
+        resp = client.post(
+            "/api/v1/build-team",
+            json={"userId": 101, "teamSize": 3, "users": REAL_MODE_USERS},
+        )
+        assert resp.status_code == 200
+        returned_ids = {m["userId"] for m in resp.json()}
+        allowed = {u["id"] for u in REAL_MODE_USERS}
+        assert returned_ids.issubset(allowed)
+
 
 # ────────────────────────────────────────────────────────────────────
 # 5. RECOMMENDATIONS — POST /api/v1/recommendations
@@ -277,6 +365,16 @@ class TestV1Recommendations:
     def test_invalid_user_returns_404(self) -> None:
         resp = client.post("/api/v1/recommendations", json={"userId": 9999})
         assert resp.status_code == 404
+
+    def test_real_mode_recommendations_uses_request_users(self) -> None:
+        resp = client.post(
+            "/api/v1/recommendations",
+            json={"userId": 101, "users": REAL_MODE_USERS},
+        )
+        assert resp.status_code == 200
+        people_ids = {p["userId"] for p in resp.json()["people"]}
+        allowed = {u["id"] for u in REAL_MODE_USERS if u["id"] != 101}
+        assert people_ids.issubset(allowed)
 
 
 # ────────────────────────────────────────────────────────────────────
